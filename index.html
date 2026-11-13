@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Watchtower Piano Defense</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<style>
+:root{--bg:#f6f3ee;--fg:#1d1b19;--mut:#7a746b;--card:#fff;--ac:#2f6f5e;--bad:#b5472f;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#141412;--fg:#efebe4;--mut:#9a948a;--card:#1f1e1b;--ac:#6fc3a9;--bad:#e5836b}}
+:root[data-theme="dark"]{--bg:#141412;--fg:#efebe4;--mut:#9a948a;--card:#1f1e1b;--ac:#6fc3a9;--bad:#e5836b}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;overflow:hidden;background:#222;font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:#fff}
+#gl{position:fixed;inset:0;width:100%;height:100%;display:block}
+#hud{display:none}#hud.on{display:block}
+#top{position:fixed;top:calc(env(safe-area-inset-top,0px) + 10px);left:14px;font-size:1rem;text-shadow:0 1px 4px #000;display:flex;gap:18px}
+#snd{background:rgba(0,0,0,.4);color:#fff;border:0;border-radius:8px;padding:2px 8px;cursor:pointer;font-size:1rem}
+#radar{position:fixed;top:calc(env(safe-area-inset-top,0px) + 10px);right:12px;background:rgba(0,0,0,.35);border-radius:50%}
+#bot{position:fixed;left:0;right:0;bottom:calc(env(safe-area-inset-bottom,0px) + 28px);text-align:center;text-shadow:0 2px 8px #000}
+#pr{font-size:clamp(2.2rem,9vw,4.5rem);font-weight:800;letter-spacing:.04em}
+#ch{display:flex;gap:8px;justify-content:center;margin-top:6px}
+#ch span{width:38px;height:38px;border-radius:50%;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;font-weight:700}
+#ch span.on{background:#ffd34d;color:#222;transform:scale(1.2)}
+#fb{margin-top:10px;min-height:1.4em;font-size:1rem}
+#bn{position:fixed;top:28%;left:0;right:0;text-align:center;font-size:clamp(2rem,8vw,4rem);font-weight:800;text-shadow:0 2px 12px #000;pointer-events:none;opacity:0;transition:opacity .4s}
+#ov{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(12,6,22,.55);padding:16px}
+.card{background:var(--card);color:var(--fg);border-radius:16px;padding:24px;max-width:480px;width:100%;text-align:center}
+.card h1{margin:0 0 8px;font-size:1.4rem}.card p{color:var(--mut);font-size:.92rem;line-height:1.45}
+.card button{background:var(--ac);color:var(--bg);border:0;border-radius:10px;padding:12px 22px;font-size:1rem;cursor:pointer;margin-top:8px}
+.keys{display:flex;gap:8px;justify-content:center;margin:14px 0}
+.keys div{flex:1;background:var(--bg);border-radius:10px;padding:10px 0}
+.keys b{display:block;font-size:.8rem;color:var(--mut)}.keys span{font-size:1.5rem;font-weight:700;color:var(--ac)}
+#dbg{position:fixed;left:10px;bottom:calc(env(safe-area-inset-bottom,0px) + 6px);font-size:.75rem;color:#fff;opacity:.8;text-shadow:0 1px 3px #000;z-index:5}
+</style></head><body>
+<canvas id="gl"></canvas>
+<div id="hud"><div id="top"><span id="wv"></span><span id="lf"></span><button id="snd" title="Sound effects on/off">🔊</button></div>
+<canvas id="radar" width="130" height="130"></canvas>
+<div id="bot"><div id="pr"></div><div id="fb"></div></div></div>
+<div id="bn"></div><div id="ov"></div>
+<div id="dbg"><span id="hd"></span> · <span id="st">Mic off</span></div>
+<script>
+const $=id=>document.getElementById(id);
+const NAMES=['C','C♯','D','D♯','E','F','F♯','G','G♯','A','A♯','B'];
+const nn=m=>NAMES[m%12]+(Math.floor(m/12)-1);
+const whites=[];for(let m=48;m<=72;m++)if([0,2,4,5,7,9,11].includes(m%12))whites.push(m);
+
+/* ================= 3D SCENE ================= */
+const R=new THREE.WebGLRenderer({canvas:$('gl'),antialias:true});R.setPixelRatio(Math.min(devicePixelRatio,2));
+const S=new THREE.Scene();S.fog=new THREE.Fog(0xc76a3f,150,720);
+const cam=new THREE.PerspectiveCamera(72,1,.5,1500);cam.rotation.order='YXZ';cam.position.set(0,21.8,0);S.add(cam);
+function resize(){R.setSize(innerWidth,innerHeight,false);cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix()}
+addEventListener('resize',resize);resize();
+const sky=new THREE.Mesh(new THREE.SphereGeometry(900,32,16),new THREE.ShaderMaterial({side:THREE.BackSide,depthWrite:false,fog:false,
+ vertexShader:'varying vec3 v;void main(){v=normalize(position);gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
+ fragmentShader:'varying vec3 v;void main(){float h=max(v.y,0.);vec3 c=mix(vec3(.78,.41,.25),vec3(.62,.2,.36),smoothstep(0.,.2,h));c=mix(c,vec3(.1,.08,.26),smoothstep(.15,.7,h));vec3 s=normalize(vec3(-.6,.07,-.8));float d=max(dot(v,s),0.);c+=vec3(1.,.62,.25)*(pow(d,6.)*.5+pow(d,60.)*.6)+vec3(1.,.9,.7)*smoothstep(.9992,.9996,d)*2.;gl_FragColor=vec4(c,1.);}'}));
+sky.frustumCulled=false;S.add(sky);
+S.add(new THREE.AmbientLight(0x8a5f7a,.85));
+const sun=new THREE.DirectionalLight(0xffa05a,1.2);sun.position.set(-60,10,-80);S.add(sun);
+// desert ground with dunes (flat near the tower)
+const gg=new THREE.PlaneGeometry(1600,1600,120,120);gg.rotateX(-Math.PI/2);
+const gp=gg.attributes.position;
+for(let i=0;i<gp.count;i++){const x=gp.getX(i),z=gp.getZ(i),r=Math.hypot(x,z),k=Math.min(1,Math.max(0,(r-25)/65));
+ gp.setY(i,(Math.sin(x*.02)*Math.cos(z*.017)*6+Math.sin(x*.05+z*.03)*2)*k*k*(3-2*k))}
+gg.computeVertexNormals();S.add(new THREE.Mesh(gg,new THREE.MeshLambertMaterial({color:0xdba568})));
+const lam=c=>new THREE.MeshLambertMaterial({color:c});
+// watchtower
+const tw=new THREE.Group();
+const tb=new THREE.Mesh(new THREE.CylinderGeometry(3.2,4.6,19,16),lam(0x7a5440));tb.position.y=9.5;tw.add(tb);
+const pf=new THREE.Mesh(new THREE.CylinderGeometry(5.4,5.4,.8,24),lam(0x4d3428));pf.position.y=19.4;tw.add(pf);
+const rl=new THREE.Mesh(new THREE.TorusGeometry(5,.12,6,36),lam(0x2e2018));rl.rotation.x=Math.PI/2;rl.position.y=20.7;tw.add(rl);
+for(let i=0;i<12;i++){const p=new THREE.Mesh(new THREE.CylinderGeometry(.1,.1,1.3,5),lam(0x2e2018)),a=i/12*6.283;p.position.set(Math.sin(a)*5,20.1,Math.cos(a)*5);tw.add(p)}
+S.add(tw);
+// rocks and cacti
+for(let i=0;i<70;i++){const a=Math.random()*6.283,r=40+Math.random()*240,x=Math.sin(a)*r,z=Math.cos(a)*r,g=new THREE.Group();
+ if(i%3){const rk=new THREE.Mesh(new THREE.DodecahedronGeometry(1+Math.random()*3),lam(0x8a5a45));rk.scale.y=.6;g.add(rk)}
+ else{const c=new THREE.Mesh(new THREE.CylinderGeometry(.5,.6,5,6),lam(0x3f5a3a));c.position.y=2.5;g.add(c);
+  for(const s of[-1,1]){const arm=new THREE.Mesh(new THREE.CylinderGeometry(.3,.3,2,5),lam(0x3f5a3a));arm.position.set(s*.9,3.2,0);g.add(arm)}}
+ const y=Math.sin(x*.02)*Math.cos(z*.017)*6+Math.sin(x*.05+z*.03)*2,k=Math.min(1,Math.max(0,(r-25)/65));
+ g.position.set(x,y*k*k*(3-2*k),z);S.add(g)}
+// UFOs, bolts, explosions
+const uBody=new THREE.SphereGeometry(1,20,10),uDome=new THREE.SphereGeometry(.55,16,8,0,Math.PI*2,0,Math.PI/2),uLt=new THREE.SphereGeometry(.3,6,6);
+const mBody=new THREE.MeshPhongMaterial({color:0x8d93a6,shininess:80,specular:0xffddaa}),mDome=new THREE.MeshPhongMaterial({color:0x55e0ff,transparent:true,opacity:.8,emissive:0x1a6070}),mLt=new THREE.MeshBasicMaterial({color:0xff4fd8});
+function mkUfo(){const g=new THREE.Group(),b=new THREE.Mesh(uBody,mBody);b.scale.set(3.4,.9,3.4);g.add(b);
+ const d=new THREE.Mesh(uDome,mDome);d.scale.set(3,3,3);d.position.y=.6;g.add(d);
+ for(let i=0;i<8;i++){const l=new THREE.Mesh(uLt,mLt),a=i/8*6.283;l.position.set(Math.sin(a)*3.1,-.1,Math.cos(a)*3.1);g.add(l)}
+ g.scale.setScalar(1.5);return g}
+const boltG=new THREE.CylinderGeometry(.18,.18,7,6);boltG.rotateX(Math.PI/2);
+const boltM=new THREE.MeshBasicMaterial({color:0xfff2a0}),fxG=new THREE.SphereGeometry(1,8,8),fxM=new THREE.MeshBasicMaterial({color:0xffa43a});
+const TARGET=new THREE.Vector3(0,20,0);
+// player's weapon: a plasma cannon held in front of the camera
+const gun=new THREE.Group(),gm=c=>new THREE.MeshLambertMaterial({color:c}),glow=new THREE.MeshBasicMaterial({color:0x55e0ff});
+gun.add(new THREE.Mesh(new THREE.BoxGeometry(.3,.28,1.1),gm(0x4a5466)));
+const gbar=new THREE.Mesh(new THREE.CylinderGeometry(.07,.09,1.4,10),gm(0x232832));gbar.rotation.x=Math.PI/2;gbar.position.z=-1.05;gun.add(gbar);
+for(const z of[-.55,-.85,-1.15]){const c=new THREE.Mesh(new THREE.TorusGeometry(.13,.028,6,16),glow);c.position.z=z;gun.add(c)}
+const grip=new THREE.Mesh(new THREE.BoxGeometry(.13,.36,.16),gm(0x2a2f3a));grip.position.set(0,-.3,.28);gun.add(grip);
+const flash=new THREE.Mesh(new THREE.SphereGeometry(.2,8,8),new THREE.MeshBasicMaterial({color:0xfff2a0}));flash.position.z=-1.8;flash.visible=false;gun.add(flash);
+const muzzle=new THREE.Object3D();muzzle.position.z=-1.8;gun.add(muzzle);
+gun.position.set(.5,-.55,-1.4);gun.rotation.y=.1;gun.visible=false;cam.add(gun);
+const G={state:'intro',hand:[],finger:0,wave:0,spawned:0,spawnT:0,wait:0,ufos:[],bolts:[],fx:[],aim:null,yawT:0,pitT:0,hint:null};
+const LEVELS=[{sp:[56,64,72],lead:4,step:2.5},{sp:[84,96,108],lead:3.5,step:1.8},{sp:[112,128,144],lead:3,step:1.2}],GRP=[20,20,20],GAP=[10,10,9];   // per level: UFO speed per wave, seconds before the first UFO arrives, seconds between arrivals
+
+function spawnGroup(n){   // whole wave appears at once; UFO k is placed so it reaches the tower LEAD+STEP*k seconds after spawning
+ const az=[...Array(n).keys()].sort(()=>Math.random()-.5),a0=Math.random()*6.283,LV=LEVELS[G.level-1],v=LV.sp[G.wave-1];
+ for(let k=0;k<n;k++){const D=9+v*(LV.lead+LV.step*k),a=a0+(az[k]+Math.random()*.8)/n*6.283,y=26+Math.random()*38,h=Math.min(y-20,D*.5),r=Math.sqrt(D*D-h*h),u=mkUfo();
+  u.position.set(Math.sin(a)*r,20+h,Math.cos(a)*r);u.userData={ph:Math.random()*6,t:0,sp:1};S.add(u);G.ufos.push(u)}}
+function boom(p){sfxBoom();for(let i=0;i<18;i++){const m=new THREE.Mesh(fxG,fxM);m.position.copy(p);
+ m.userData={v:new THREE.Vector3(Math.random()-.5,Math.random()-.3,Math.random()-.5).multiplyScalar(30),l:1,s:1+Math.random()*1.5};S.add(m);G.fx.push(m)}}
+function nearest(){   // closest UFO without a shot already heading to it; ties are random but stay stable
+ let best=1e9,pool=[];
+ for(const u of G.ufos){if(u.userData.t)continue;const d=u.position.distanceTo(TARGET);if(d<best-.01){best=d;pool=[u]}else if(Math.abs(d-best)<=.01)pool.push(u)}
+ if(!pool.length)return G.nx=null;
+ if(!pool.includes(G.nx))G.nx=pool[Math.random()*pool.length|0];
+ return G.nx}
+function fire(){
+ const t=nearest();if(!t)return false;t.userData.t=1;G.aim=t;G.nx=null;
+ const b=new THREE.Mesh(boltG,boltM);b.position.copy(muzzle.getWorldPosition(new THREE.Vector3()));b.userData.tg=t;S.add(b);G.bolts.push(b);G.recoil=1;sfxFire();return true}
+
+/* ================= GAME FLOW ================= */
+const ov=$('ov');
+function setOv(h){ov.innerHTML='<div class="card">'+h+'</div>';ov.style.display='flex'}
+function banner(t){const b=$('bn');b.textContent=t;b.style.opacity=1;setTimeout(()=>b.style.opacity=0,2200)}
+function intro(){G.state='intro';$('hud').classList.remove('on');
+ setOv('<h1>Watchtower Piano Defense</h1><p>Defend your desert watchtower from UFOs using a real piano. The game listens through your microphone. Play one note at a time. The game listens for one piano note at a time. Headphones are recommended so the game’s sound effects do not leak back into your microphone. The 🔊 button mutes sound effects.</p><button id="go">Start listening</button>');
+ $('go').onclick=startMic}
+function chooseLevel(){
+ setOv('<h1>Choose a level</h1><p>The higher the level, the faster the UFOs arrive and the more notes per second you need to play.</p><button id="l1">Level 1</button> <button id="l2">Level 2</button> <button id="l3">Level 3</button>');
+ [1,2,3].forEach(n=>$('l'+n).onclick=()=>{G.level=n;chooseHand()})}
+function chooseHand(){
+ for(const u of G.ufos)S.remove(u);for(const b of G.bolts)S.remove(b);for(const f of G.fx)S.remove(f);
+ G.ufos=[];G.bolts=[];G.fx=[];G.aim=null;G.state='hand';$('hud').classList.remove('on');
+ setOv('<h1>Which hand?</h1><p>Choose the hand you will play with.</p><button id="hl">Left hand</button> <button id="hr">Right hand</button>');
+ $('hl').onclick=()=>placeHand(true);$('hr').onclick=()=>placeHand(false)}
+function placeHand(left){
+ G.left=left;const i=Math.random()*(whites.length-4)|0;G.hand=whites.slice(i,i+5);
+ const fg=k=>left?5-k:k+1,name=m=>NAMES[m%12];
+ setOv('<h1>Place your '+(left?'left':'right')+' hand</h1><p>Put your fingers on these 5 neighbouring white keys, with your thumb (finger 1) on the '+(left?'highest':'lowest')+' one. Any octave works, only the note letter matters:</p><div class="keys">'+
+  G.hand.map((m,k)=>'<div><b>Finger '+fg(k)+'</b><span>'+name(m)+'</span></div>').join('')+
+  '</div><p>Tip: try a key now. The bottom-left shows the detected note and confidence. Play one note at a time.</p><button id="rd">Ready, start game</button>');
+ $('rd').onclick=startGame}
+function startGame(){ov.style.display='none';$('hud').classList.add('on');G.wave=0;G.finger=0;nextFinger();startWave();G.state='play'}
+function startWave(){G.wave++;G.spawned=0;G.spawnT=2;G.wait=0;banner('WAVE '+G.wave+' of 3')}
+function nextFinger(){let f;do{f=1+Math.random()*5|0}while(f===G.finger);G.finger=f;
+ $('pr').textContent='FINGER '+f}
+
+function fb(t,col){$('fb').textContent=t;$('fb').style.color=col||'#fff'}
+function end(win){G.state='end';$('hud').classList.remove('on');
+ setOv('<h1>'+(win?'You win! 🎉':'The watchtower fell')+'</h1><p>'+(win?'All 60 UFOs were shot down.':'A UFO reached the watchtower on wave '+G.wave+'.')+'</p><button id="again">Play again</button>');
+ $('again').onclick=chooseLevel}
+function onNote(m){
+ if(G.state!=='play')return;
+ if(m%12===G.hand[G.left?5-G.finger:G.finger-1]%12){
+  if(fire()){fb('✓ Fire!','#9dff9d');nextFinger()}else fb('Correct key, but no UFO to target yet','#ffd34d')
+ }else fb('✗ Wrong key, no shot','#ff9a85')}
+
+/* ================= LOOP ================= */
+const clock=new THREE.Clock(),radar=$('radar').getContext('2d');
+function wrap(a){while(a>Math.PI)a-=6.283;while(a<-Math.PI)a+=6.283;return a}
+function frame(){
+ requestAnimationFrame(frame);const dt=Math.min(clock.getDelta(),.05),t=clock.elapsedTime;
+ if(G.state==='play'){
+  if(G.wait>0){G.wait-=dt;if(G.wait<=0)startWave()}
+  else{
+   G.spawnT-=dt;
+   if(!G.ufos.length&&G.spawnT>1.5)G.spawnT=1.5;   // field cleared: next swarm comes sooner
+   if(G.spawned<20&&G.spawnT<=0){const n=Math.min(GRP[G.wave-1],20-G.spawned);spawnGroup(n);G.spawned+=n;G.spawnT=GAP[G.wave-1]}
+   if(G.spawned>=20&&!G.ufos.length){if(G.wave>=3){end(true)}else{G.wait=3.5;banner('Wave cleared!')}}
+  }
+  for(const u of G.ufos){
+   const d=TARGET.clone().sub(u.position),L=d.length();
+   if(L<9){end(false);break}
+   u.position.addScaledVector(d,LEVELS[G.level-1].sp[G.wave-1]*u.userData.sp*dt/L);
+   u.rotation.y+=dt*2;u.rotation.z=Math.sin(t*2+u.userData.ph)*.12}
+  for(let i=G.bolts.length-1;i>=0;i--){const b=G.bolts[i],tg=b.userData.tg,d=tg.position.clone().sub(b.position),L=d.length(),st=800*dt;
+   if(L<=st+2.5){boom(tg.position);S.remove(tg);if(G.aim===tg)G.aim=null;G.ufos.splice(G.ufos.indexOf(tg),1);S.remove(b);G.bolts.splice(i,1)}
+   else{b.position.addScaledVector(d,st/L);b.lookAt(tg.position)}}
+  const at=G.aim||nearest();   // keep facing the shot until it lands, then turn to the next UFO on its own
+  if(at){const p=at.position;G.yawT=Math.atan2(-p.x,-p.z);G.pitT=Math.atan2(p.y-cam.position.y,Math.hypot(p.x,p.z))}
+  cam.rotation.y+=wrap(G.yawT-cam.rotation.y)*Math.min(1,dt*7);
+  cam.rotation.x+=(G.pitT*.6-cam.rotation.x)*Math.min(1,dt*5);
+  $('wv').textContent='Level '+G.level+' · Wave '+G.wave+' / 3';$('lf').textContent='UFOs left: '+(20-G.spawned+G.ufos.length);
+ }else{cam.rotation.y+=dt*.06;cam.rotation.x=.08}
+ for(let i=G.fx.length-1;i>=0;i--){const f=G.fx[i],u=f.userData;u.l-=dt*1.3;f.position.addScaledVector(u.v,dt);f.scale.setScalar(Math.max(.01,u.l*u.s*2));if(u.l<=0){S.remove(f);G.fx.splice(i,1)}}
+G.recoil=Math.max(0,(G.recoil||0)-dt*6);gun.visible=G.state==='play';gun.position.x=Math.min(.5,.5*cam.aspect);gun.position.z=-1.4+.22*G.recoil;flash.visible=G.recoil>.7;
+ // radar (top = where you are looking)
+ radar.clearRect(0,0,130,130);radar.strokeStyle='rgba(255,255,255,.35)';radar.beginPath();radar.arc(65,65,62,0,6.283);radar.moveTo(65,3);radar.lineTo(65,65);radar.stroke();
+ const th=cam.rotation.y,c=Math.cos(th),s=Math.sin(th);
+ for(const u of G.ufos){const x=u.position.x,z=u.position.z,d=Math.hypot(x,z),k=Math.min(1,165/d),sx=(x*c-z*s)*k,up=-(x*s+z*c)*k;
+  radar.fillStyle=u.userData.t?'rgba(255,255,255,.5)':(d<400?'#ff5a4d':'#ffd34d');radar.fillRect(65+sx*60/165-2,65-up*60/165-2,4,4);
+  if(u===(G.aim||G.nx)){radar.strokeStyle='#fff';radar.strokeRect(65+sx*60/165-5,65-up*60/165-5,10,10)}}
+ R.render(S,cam)}
+frame();
+
+/* ================= PIANO LISTENING =================
+   AudioWorklet capture + lightweight monophonic YIN pitch estimation.
+   This keeps microphone capture off the main thread and avoids the
+   deprecated ScriptProcessorNode used by the original prototype.
+*/
+let ctx = null, micStream = null, workletNode = null, noiseBuf = null;
+let mute = false, noiseFloorDb = -72, previousDb = -72;
+let audioRing = new Float32Array(4096), audioWrite = 0, audioFilled = 0;
+let pendingAttack = 0, lastEventAt = -Infinity;
+let sampleRateDown = 12000, lastPitch = null, lastConfidence = 0;
+const DECIMATE = 4, YIN_SIZE = 2048;
+$('snd').onclick = () => { mute = !mute; $('snd').textContent = mute ? '🔇' : '🔊'; };
+
+// Keep sound effects audible to the player without muting the microphone.
+// Headphones are recommended to prevent speaker output from re-entering the mic.
+function sfxFire() {
+  if (mute || !ctx) return;
+  const t = ctx.currentTime, o = ctx.createOscillator(), g = ctx.createGain();
+  o.type = 'sawtooth';
+  o.frequency.setValueAtTime(1900, t);
+  o.frequency.exponentialRampToValueAtTime(260, t + .14);
+  g.gain.setValueAtTime(.16, t);
+  g.gain.exponentialRampToValueAtTime(.001, t + .15);
+  o.connect(g); g.connect(ctx.destination); o.start(t); o.stop(t + .16);
+}
+function sfxBoom() {
+  if (mute || !ctx) return;
+  const t = ctx.currentTime;
+  if (!noiseBuf) {
+    noiseBuf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * .4), ctx.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  }
+  const s = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+  s.buffer = noiseBuf; f.type = 'lowpass';
+  f.frequency.setValueAtTime(3200, t);
+  f.frequency.exponentialRampToValueAtTime(250, t + .3);
+  g.gain.setValueAtTime(.34, t);
+  g.gain.exponentialRampToValueAtTime(.001, t + .32);
+  s.connect(f); f.connect(g); g.connect(ctx.destination);
+  s.start(t); s.stop(t + .35);
+}
+
+async function startMic() {
+  try {
+    if (!window.isSecureContext) {
+      throw new Error('Microphone access requires HTTPS or localhost. Open this game through GitHub Pages or a local development server.');
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error('This browser does not provide microphone access.');
+    }
+    if (!window.AudioWorkletNode || !window.AudioContext) {
+      throw new Error('This browser does not support AudioWorklet. Please try a recent version of Chrome, Edge, Firefox, or Safari.');
+    }
+
+    $('st').textContent = 'Requesting microphone…';
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false
+      }
+    });
+
+    ctx = new AudioContext({ latencyHint: 'interactive' });
+    await ctx.resume();
+    if (!ctx.audioWorklet) throw new Error('AudioWorklet is unavailable in this browser. Please use a recent browser version.');
+    sampleRateDown = ctx.sampleRate / DECIMATE;
+
+    const workletUrl = new URL('./audio/piano-capture-worklet.js', location.href);
+    await ctx.audioWorklet.addModule(workletUrl.href);
+
+    const source = ctx.createMediaStreamSource(micStream);
+    workletNode = new AudioWorkletNode(ctx, 'piano-capture', {
+      numberOfInputs: 1,
+      numberOfOutputs: 1,
+      outputChannelCount: [1],
+      processorOptions: { chunkSize: 1024 }
+    });
+    const silent = ctx.createGain();
+    silent.gain.value = 0;
+    workletNode.port.onmessage = e => {
+      if (e.data?.type === 'audio' && e.data.samples) processAudioChunk(e.data.samples);
+      if (e.data?.type === 'error') $('st').textContent = 'Audio capture error: ' + e.data.message;
+    };
+    source.connect(workletNode);
+    workletNode.connect(silent);
+    silent.connect(ctx.destination);
+
+    audioRing.fill(0); audioWrite = 0; audioFilled = 0;
+    noiseFloorDb = -72; previousDb = -72;
+    pendingAttack = 0; lastEventAt = -Infinity;
+    $('st').textContent = 'Mic ready · play a note';
+    chooseLevel();
+  } catch (err) {
+    $('st').textContent = 'Mic unavailable';
+    setOv('<h1>Microphone setup failed</h1><p>' +
+      String(err?.message || err).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])) +
+      '</p><button id="retry">Try again</button>');
+    $('retry').onclick = startMic;
+  }
+}
+
+// AudioWorklet delivers 1024 source frames. Average every four frames to
+// reduce the pitch-analysis workload while preserving the piano fundamentals.
+function processAudioChunk(input) {
+  let energy = 0;
+  for (let i = 0; i < input.length; i++) energy += input[i] * input[i];
+  const rms = Math.sqrt(energy / Math.max(1, input.length));
+  const db = 20 * Math.log10(rms + 1e-8);
+
+  for (let i = 0; i + DECIMATE <= input.length; i += DECIMATE) {
+    const v = (input[i] + input[i+1] + input[i+2] + input[i+3]) * .25;
+    audioRing[audioWrite] = v;
+    audioWrite = (audioWrite + 1) % audioRing.length;
+    audioFilled = Math.min(audioRing.length, audioFilled + 1);
+  }
+
+  // The floor follows downward quickly and upward very slowly, so a sustained
+  // piano note does not become the new noise baseline.
+  noiseFloorDb = db < noiseFloorDb ? db : noiseFloorDb + (db - noiseFloorDb) * .003;
+  const gateDb = Math.max(-62, noiseFloorDb + 10);
+  const now = performance.now();
+  const attack = db > gateDb && (db - previousDb > 2.8 || (db > gateDb + 8 && now - lastEventAt > 500));
+
+  if (attack && now - lastEventAt > 145) {
+    pendingAttack = 5; // allow the fundamental to develop over a few short chunks
+  } else if (pendingAttack > 0) {
+    pendingAttack--;
+    if (pendingAttack === 0 && audioFilled >= YIN_SIZE) {
+      const window = copyRecentSamples(YIN_SIZE);
+      const pitch = estimatePitchYin(window, sampleRateDown);
+      if (pitch && pitch.confidence >= .72) {
+        const midiFloat = 69 + 12 * Math.log2(pitch.frequency / 440);
+        const midi = Math.round(midiFloat);
+        if (midi >= 24 && midi <= 96 && now - lastEventAt > 145) {
+          lastPitch = midi;
+          lastConfidence = pitch.confidence;
+          lastEventAt = now;
+          $('hd').textContent = 'Heard: ' + nn(midi) + ' (' + pitch.frequency.toFixed(1) +
+            ' Hz · ' + Math.round(pitch.confidence * 100) + '% confidence)';
+          $('st').textContent = 'Listening · AudioWorklet';
+          onNote(midi);
+        } else if (midi < 24 || midi > 96) {
+          $('st').textContent = 'Pitch outside supported range';
+        }
+      } else {
+        $('st').textContent = 'Could not isolate a clear note · try a cleaner attack';
+      }
+    }
+  }
+
+  // A new amplitude rise can trigger another attack, including repeated
+  // articulations of the same pitch.
+  previousDb = db;
+}
+
+function copyRecentSamples(count) {
+  const out = new Float32Array(count);
+  const start = (audioWrite - count + audioRing.length) % audioRing.length;
+  for (let i = 0; i < count; i++) out[i] = audioRing[(start + i) % audioRing.length];
+  return out;
+}
+
+// YIN difference/CMND estimator. Intended for one piano note at a time;
+// unlike the old nested MPM implementation, the analysis window and pitch
+// range are bounded, and it is called only after an onset candidate.
+function estimatePitchYin(x, sr) {
+  const n = x.length;
+  let mean = 0;
+  for (let i = 0; i < n; i++) mean += x[i];
+  mean /= n;
+
+  const signal = new Float32Array(n);
+  for (let i = 0; i < n; i++) signal[i] = x[i] - mean;
+
+  const minTau = Math.max(2, Math.floor(sr / 1300));
+  const maxTau = Math.min(Math.floor(sr / 45), (n >> 1) - 1);
+  const cmnd = new Float32Array(maxTau + 1);
+  let running = 0;
+  cmnd[0] = 1;
+
+  for (let tau = 1; tau <= maxTau; tau++) {
+    let diff = 0;
+    const limit = n - tau;
+    for (let j = 0; j < limit; j++) {
+      const d = signal[j] - signal[j + tau];
+      diff += d * d;
+    }
+    running += diff;
+    cmnd[tau] = running > 0 ? diff * tau / running : 1;
+  }
+
+  // Select the first sufficiently deep valley, then follow it to its minimum.
+  const threshold = .18;
+  let tauEstimate = -1;
+  for (let tau = minTau; tau <= maxTau; tau++) {
+    if (cmnd[tau] < threshold) {
+      while (tau + 1 <= maxTau && cmnd[tau + 1] < cmnd[tau]) tau++;
+      tauEstimate = tau;
+      break;
+    }
+  }
+  if (tauEstimate < 0) {
+    let best = Infinity;
+    for (let tau = minTau; tau <= maxTau; tau++) {
+      if (cmnd[tau] < best) { best = cmnd[tau]; tauEstimate = tau; }
+    }
+    if (tauEstimate < 0 || best > .30) return null;
+  }
+
+  const t = tauEstimate;
+  const a = cmnd[Math.max(1, t - 1)], b = cmnd[t], c = cmnd[Math.min(maxTau, t + 1)];
+  const denom = a - 2 * b + c;
+  const shift = Math.abs(denom) > 1e-9 ? .5 * (a - c) / denom : 0;
+  const period = t + Math.max(-.5, Math.min(.5, shift));
+  const confidence = Math.max(0, Math.min(1, 1 - b));
+  const frequency = sr / period;
+  if (!Number.isFinite(frequency) || frequency < 45 || frequency > 1300) return null;
+  return { frequency, confidence };
+}
+
+</script></body></html>
