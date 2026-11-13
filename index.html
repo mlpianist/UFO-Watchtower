@@ -187,6 +187,7 @@ G.recoil=Math.max(0,(G.recoil||0)-dt*6);gun.visible=G.state==='play';gun.positio
   if(u===(G.aim||G.nx)){radar.strokeStyle='#fff';radar.strokeRect(65+sx*60/165-5,65-up*60/165-5,10,10)}}
  R.render(S,cam)}
 frame();
+intro();
 
 /* ================= PIANO LISTENING =================
    AudioWorklet capture + lightweight monophonic YIN pitch estimation.
